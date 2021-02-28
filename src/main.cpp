@@ -4,18 +4,19 @@
 #include <ESP8266WiFi.h>
 #endif
 #include <Firebase_ESP_Client.h>
+#include <ressources.h>
 
 /* 1. Define the WiFi credentials */
-#define WIFI_SSID "WIFI_AP"
-#define WIFI_PASSWORD "WIFI_PASSWORD"
+const char *WIFI_SSID = wifiSSID;
+const char *WIFI_PASSWORD = wifiPassword;
 
 /* 2. Define the Firebase project host name and API Key */
-#define FIREBASE_HOST "PROJECT_ID.firebaseio.com"
-#define API_KEY "API_KEY"
+std::string FIREBASE_HOST = projectID;
+std::string API_KEY = apiKey;
 
 /* 3. Define the user Email and password that alreadey registerd or added in your project */
-#define USER_EMAIL "USER_EMAIL"
-#define USER_PASSWORD "USER_PASSWORD"
+std::string USER_EMAIL = userEmail;
+std::string USER_PASSWORD = userPassword;
 
 /* 4. Define FirebaseESP8266 data object for data sending and receiving */
 FirebaseData fbdo;
@@ -80,6 +81,7 @@ void changeParkingState(bool state)
     //Failed?, get the error reason from fbdo
 
     Serial.print("Error in setInt, ");
+
     Serial.println(fbdo.errorReason());
   }
 }
