@@ -80,7 +80,7 @@ void changeParkingState(bool state)
   {
     //Failed?, get the error reason from fbdo
 
-    Serial.print("Error in setInt, ");
+    Serial.print("Error in setBool, ");
 
     Serial.println(fbdo.errorReason());
   }
