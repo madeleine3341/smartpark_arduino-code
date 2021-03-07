@@ -71,7 +71,7 @@ void changeParkingState(bool state)
   /* 11. Try to set int data to Firebase */
   //The set function returns bool for the status of operation
   //fbdo requires for sending the data and pass as the pointer
-  if (Firebase.RTDB.setBool(&fbdo, "/parkings/parking 1/status", state))
+  if (Firebase.RTDB.setBool(&fbdo, "/parkings/parking 1/spots/one", state))
   {
     //Success
     Serial.println("Set int data success");
