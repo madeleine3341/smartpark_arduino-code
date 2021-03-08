@@ -104,16 +104,32 @@ byte Adafruit_HMC5883_Unified::read8(byte address, byte reg)
 /**************************************************************************/
 void Adafruit_HMC5883_Unified::read()
 {
-  // Read the magnetometer
-  write8(HMC5883_ADDRESS_MAG, HMC5883_REGISTER_MAG_MR_REG_M, 0x01);
-  delay(6);
-  Wire.beginTransmission(HMC5883_ADDRESS_MAG);
+  // HMC5883L Read
+  if (HMC5883_ADDRESS_MAG == 0X1E)
+  {
+    write8(HMC5883_ADDRESS_MAG, HMC5883_REGISTER_MAG_MR_REG_M, 0x01);
+    delay(6);
+    Wire.beginTransmission(HMC5883_ADDRESS_MAG);
 #if ARDUINO >= 100
-  Wire.write(HMC5883_REGISTER_MAG_OUT_X_H_M);
+    Wire.write(HMC5883_REGISTER_MAG_OUT_X_H_M);
 #else
-  Wire.send(HMC5883_REGISTER_MAG_OUT_X_H_M);
+    Wire.send(HMC5883_REGISTER_MAG_OUT_X_H_M);
 #endif
-  Wire.endTransmission();
+    Wire.endTransmission();
+  }
+  //QMC5883L Read
+  else
+  {
+    delay(6);
+    Wire.beginTransmission(HMC5883_ADDRESS_MAG);
+#if ARDUINO >= 100
+    Wire.write(0x00);
+#else
+    Wire.send(0x00);
+#endif
+    Wire.endTransmission();
+  }
+
   Wire.requestFrom(HMC5883_ADDRESS_MAG, (byte)6);
 
   // Wait around until enough data is available
@@ -171,21 +187,31 @@ Adafruit_HMC5883_Unified::Adafruit_HMC5883_Unified(int32_t sensorID)
 /**************************************************************************/
 bool Adafruit_HMC5883_Unified::begin(String type, int sda, int scl)
 {
+
   // Enable I2C
+  Wire.begin(sda, scl);
+  //QMC5883L Set up
   if (type == "QMC5883L")
   {
     HMC5883_ADDRESS_MAG = 0x0D;
+    // Enable the magnetometer, continous mode
+    write8(HMC5883_ADDRESS_MAG, 0x0B, 0x01);
+    // Set the gain to a known level 8 GAUSS
+    write8(HMC5883_ADDRESS_MAG, 0X09, 0X10);
+    _hmc5883_Gauss_LSB_XY = 230;
+    _hmc5883_Gauss_LSB_Z = 205;
+    // Set the frequency to 100Hz
+    write8(HMC5883_ADDRESS_MAG, 0X09, 0x08);
   }
+  //HMC5883L Set up
   else
   {
     HMC5883_ADDRESS_MAG = 0x1E;
+    // Enable the magnetometer, frequency 75Hz
+    write8(HMC5883_ADDRESS_MAG, 0x00, 0x78);
+    // Set the gain to a known level
+    setMagGain(HMC5883_MAGGAIN_8_1);
   }
-  Wire.begin(sda, scl);
-
-  // Enable the magnetometer
-  write8(HMC5883_ADDRESS_MAG, 0x00, 0x78);
-  // Set the gain to a known level
-  setMagGain(HMC5883_MAGGAIN_8_1);
 
   return true;
 }
@@ -272,7 +298,7 @@ void Adafruit_HMC5883_Unified::getSensor(sensor_t *sensor)
   memset(sensor, 0, sizeof(sensor_t));
 
   /* Insert the sensor name in the fixed length char array */
-  strncpy(sensor->name, "HMC5883", sizeof(sensor->name) - 1);
+  strncpy(sensor->name, "HMC5883/QMC5883", sizeof(sensor->name) - 1);
   sensor->name[sizeof(sensor->name) - 1] = 0;
   sensor->version = 1;
   sensor->sensor_id = _sensorID;
