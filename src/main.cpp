@@ -6,17 +6,7 @@
 #include <Wire.h>
 #include <Firebase_ESP_Client.h>
 #include <ressources.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_HMC5883_U.h>
-
-#define trig_TH 1000 // Thresh hold level to trigger the algorithm
-#define avg_TH 70
-#define S 300 // How many samples to take to decide if the car is parked
-
-//String type = "QMC5883L";
-String type = "HMC5883L";            //uncomment this line, and comment the line above if using the HMC5883L
-String Parking_lot_id = "parking 1"; //Need to set the ID of the lot
-String Parking_spot_id = "one";      //Need to set the spot ID
+#include <MechaQMC5883.h>
 
 /* 1. Define the WiFi credentials */
 const char *WIFI_SSID = wifiSSID;
@@ -39,43 +29,120 @@ FirebaseAuth auth;
 /* 6. Define the FirebaseConfig data for config data */
 FirebaseConfig config;
 
-Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
-float init_val = 0;
-String str_val = "/parkings/" + Parking_lot_id + "/spots/" + Parking_spot_id;
-const char *P_Id = str_val.c_str();
-
 void changeParkingState(bool state);
-float get_avg(int samples);
-float get_Mean();
-bool car_detected();
 void Setup_Firebase();
 
+MechaQMC5883 qmc;
+
+double init_val = 0;
 void setup()
 {
+  Serial.begin(115200);
 
   Setup_Firebase();
 
-  if (!mag.begin(type))
+  Wire.begin(23, 19); //  REMOVE THESE TWO ARGUMENTS IF YOUR BOARD HAS PREDEFINED I2C PINS OR SET YOUR CUSTOM ONES HERE
+
+  qmc.init();
+  //qmc.setMode(Mode_Continuous,ODR_200Hz,RNG_2G,OSR_256);
+  Serial.print(" Steady State measurment");
+  for (size_t i = 0; i < 300; i++)
   {
-    Serial.println("Ooops, no HMC5883 detected ... Check your wiring!");
-    while (1)
-      ;
+    int x, y, z;
+    float a;
+
+    qmc.read(&x, &y, &z, &a);
+    init_val += x;
+    Serial.print(".");
+    delay(25);
   }
-  init_val = get_avg(50);
+  init_val /= 300;
+  Serial.println(init_val);
+  delay(2000);
 }
 
+bool currentState = true;
+bool parkingState = true;
+int threshold = 20;
 void loop()
 {
-  if (car_detected())
+  int x, y, z;
+  float a;
+
+  qmc.read(&x, &y, &z, &a);
+  double diff = abs(x - init_val) / init_val * 100;
+  if (diff > threshold)
   {
-    changeParkingState(true);
-    delay(10000); // delay for 10s
+    int timeNow = millis();
+
+    if (currentState == true)
+    {
+      Serial.println("potential car detected");
+      while (timeNow + 7000 > millis())
+      {
+        qmc.read(&x, &y, &z, &a);
+        if (abs(x - init_val) / init_val * 100 < threshold)
+        {
+          currentState = true;
+          Serial.println("Oups not a car");
+          break;
+        }
+        else
+        {
+          currentState = false;
+          Serial.print(".");
+          delay(10);
+        }
+      }
+      Serial.println();
+    }
   }
   else
   {
-    changeParkingState(false);
+    if (currentState == false)
+    {
+      int timeNow = millis();
+      Serial.println("potential car leaving");
+      while (timeNow + 7000 > millis())
+      {
+        qmc.read(&x, &y, &z, &a);
+        if (abs(x - init_val) / init_val * 100 < threshold)
+        {
+          currentState = true;
+          Serial.print(".");
+          delay(10);
+        }
+        else
+        {
+          currentState = false;
+          Serial.println("Car is not leaving, maybe noise or engine startup");
+          break;
+        }
+      }
+    }
+    else
+    {
+      currentState = true;
+      Serial.print(diff);
+      Serial.print("-");
+    }
   }
-  delay(50);
+  if (currentState != parkingState)
+  {
+    // changeParkingState(currentState);
+    Serial.println("Parking is now set to: ");
+    parkingState = currentState;
+    changeParkingState(parkingState);
+    if (parkingState)
+    {
+      Serial.print("free");
+    }
+    else
+    {
+      Serial.print("taken");
+    }
+  }
+  delay(1000);
 }
 
 void changeParkingState(bool state)
@@ -83,7 +150,7 @@ void changeParkingState(bool state)
   /* 11. Try to set int data to Firebase */
   //The set function returns bool for the status of operation
   //fbdo requires for sending the data and pass as the pointer
-  if (Firebase.RTDB.setBool(&fbdo, "/parkings/parking 1/spots/one", state))
+  if (Firebase.RTDB.setBool(&fbdo, "/parkings/parking 1/spots/L025", state))
   {
     //Success
     Serial.println("Set int data success");
@@ -117,55 +184,4 @@ void Setup_Firebase()
   auth.user.password = USER_PASSWORD;
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
-}
-
-float get_avg(int samples)
-{
-  sensors_event_t event;
-  mag.getEvent(&event);
-  float val = 0;
-  float result = 0;
-  unsigned int x = 0;
-  for (int i = 0; i < samples; i++)
-  {
-    val = val + get_Mean();
-    x++;
-    delay(10);
-  }
-  result = val / x;
-  return result;
-}
-float get_Mean()
-{
-  float result;
-  sensors_event_t event;
-  mag.getEvent(&event);
-  result = sqrt(event.magnetic.x * event.magnetic.x + event.magnetic.y * event.magnetic.y + event.magnetic.z * event.magnetic.z);
-  return result;
-}
-bool car_detected()
-{
-  float current_val = get_Mean();
-  //Serial.println(abs((current_val - init_val))*100/init_val);
-  if (abs((current_val - init_val)) * 100 / init_val > trig_TH)
-  {
-    bool state;
-    current_val = get_avg(S);
-    Serial.println(abs((current_val - init_val)) * 100 / init_val);
-    if (abs((current_val - init_val)) * 100 / init_val > avg_TH)
-    {
-      Serial.print("Set True \n");
-      state = true;
-    }
-    else
-    {
-      Serial.print("Set False \n");
-      state = false;
-    }
-    return state;
-  }
-  else
-  {
-    return false;
-  }
 }
