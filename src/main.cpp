@@ -37,7 +37,7 @@ MechaQMC5883 qmc;
 double init_val = 0;
 bool currentState = true;
 bool parkingState = true;
-int threshold = 20;
+int threshold = 10;
 
 String spotPath;
 
@@ -53,9 +53,16 @@ void setupWifi();
 
 String ssid, password;
 bool configured = false;
+
+int blueLED = 27;
+int redLED = 0;
+int greenLED = 2;
 void setup()
 {
   Serial.begin(115200);
+  pinMode(blueLED, OUTPUT);
+  pinMode(greenLED, OUTPUT);
+  pinMode(redLED, OUTPUT);
   if (!isConfigured())
   {
     // WiFi.mode(WIFI_STA);
@@ -67,6 +74,7 @@ void setup()
   {
     setupWifi();
     setup_firebase();
+    changeParkingState(parkingState);
     setup_sensor();
   }
 }
@@ -77,9 +85,13 @@ void loop()
   {
     /* code */
   }
-  else
+  else if (WiFi.status() == WL_CONNECTED)
   {
     algorithm();
+  }
+  else
+  {
+    setupWifi();
   }
 }
 
@@ -88,17 +100,17 @@ void setup_sensor()
   Wire.begin(23, 19);
   qmc.init();
   Serial.print(" Steady State measurment");
+  int x, y, z;
+  float a;
   for (size_t i = 0; i < 300; i++)
   {
-    int x, y, z;
-    float a;
 
     qmc.read(&x, &y, &z, &a);
     init_val += x;
-    Serial.print("-");
+    Serial.print("|");
     delay(25);
   }
-  init_val /= 300;
+  init_val = abs(init_val / 300);
   Serial.println(init_val);
   delay(2000);
 }
@@ -117,18 +129,12 @@ bool checkWifi(const char *SS_ID, const char *Password)
 {
   WiFi.disconnect();
   WiFi.begin(SS_ID, Password);
-  int c = 0;
   Serial.println("Waiting for WiFi to connect");
-  while (c < 7)
+  while (WiFi.status() != WL_CONNECTED)
   {
-    if (WiFi.status() == WL_CONNECTED)
-    {
-      Serial.print("Connected to wifi: ");
-      return true;
-    }
+    Serial.print('.');
     delay(500);
-    Serial.print("*");
-    c++;
+    return true;
   }
   Serial.print("Failed to Connect \n");
   return false;
@@ -168,6 +174,8 @@ void processRequest(AsyncWebServerRequest *request, uint8_t *data, size_t len, s
       configured = true;
       serializeJson(doc, configFile);
       Serial.print("WiFi Credential Successfully Stored in Flash\n");
+      digitalWrite(greenLED, LOW);
+      digitalWrite(redLED, LOW);
     }
   }
   else
@@ -179,6 +187,8 @@ void processRequest(AsyncWebServerRequest *request, uint8_t *data, size_t len, s
 
 void setup_AP()
 {
+  digitalWrite(greenLED, HIGH);
+  digitalWrite(redLED, HIGH);
   WiFi.softAP(apssid, appassword);
   IPAddress myIP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
@@ -193,34 +203,49 @@ void setup_AP()
   Serial.println("HTTP server started");
 }
 
+int x, y, z;
+float a;
 void algorithm()
 {
-  int x, y, z;
-  float a;
-
   qmc.read(&x, &y, &z, &a);
-  double diff = abs(x - init_val) / init_val * 100;
+  double diff = abs(abs(x) - init_val) / init_val * 100;
   if (diff > threshold)
   {
+    Serial.print(diff);
+    Serial.print("-");
     int timeNow = millis();
 
     if (currentState == true)
     {
       Serial.println("potential car detected");
+      bool blink = false;
       while (timeNow + 7000 > millis())
       {
         qmc.read(&x, &y, &z, &a);
-        if (abs(x - init_val) / init_val * 100 < threshold)
+        if (abs(abs(x) - init_val) / init_val * 100 < threshold)
         {
           currentState = true;
           Serial.println("Oups not a car");
+          digitalWrite(greenLED, HIGH);
+
           break;
         }
         else
         {
+          if (blink)
+          {
+            digitalWrite(greenLED, LOW);
+            blink = !blink;
+          }
+          else
+          {
+            digitalWrite(greenLED, HIGH);
+            blink = !blink;
+          }
+
           currentState = false;
           Serial.print(".");
-          delay(10);
+          delay(50);
         }
       }
       Serial.println();
@@ -232,46 +257,67 @@ void algorithm()
     {
       int timeNow = millis();
       Serial.println("potential car leaving");
+      bool blink = false;
       while (timeNow + 7000 > millis())
       {
         qmc.read(&x, &y, &z, &a);
-        if (abs(x - init_val) / init_val * 100 < threshold)
+        if (abs(abs(x) - init_val) / init_val * 100 < threshold)
         {
           currentState = true;
           Serial.print(".");
-          delay(10);
+          if (blink)
+          {
+            digitalWrite(redLED, LOW);
+            blink = !blink;
+          }
+          else
+          {
+            digitalWrite(redLED, HIGH);
+            blink = !blink;
+          }
+          delay(50);
         }
         else
         {
           currentState = false;
           Serial.println("Car is not leaving, maybe noise or engine startup");
+          digitalWrite(redLED, HIGH);
           break;
         }
       }
     }
     else
     {
+      digitalWrite(greenLED, HIGH);
       currentState = true;
+      Serial.print("|");
       Serial.print(diff);
+      Serial.print("|");
       Serial.print("-");
     }
   }
   if (currentState != parkingState)
   {
-    // changeParkingState(currentState);
     Serial.println("Parking is now set to: ");
     parkingState = currentState;
     changeParkingState(parkingState);
     if (parkingState)
     {
+      digitalWrite(greenLED, HIGH);
+      digitalWrite(redLED, LOW);
+
       Serial.print("free");
     }
     else
     {
+
+      digitalWrite(redLED, HIGH);
+      digitalWrite(greenLED, LOW);
+
       Serial.print("taken");
     }
   }
-  delay(1000);
+  delay(1500);
 }
 
 void changeParkingState(bool state)
@@ -280,7 +326,7 @@ void changeParkingState(bool state)
   if (Firebase.RTDB.setBool(&fbdo, spotPath.c_str(), state))
   {
     //Success
-    Serial.println("Set int data success");
+    Serial.println("Set bool data success");
   }
   else
   {
@@ -333,12 +379,28 @@ bool isConfigured()
 
 void setupWifi()
 {
+  digitalWrite(blueLED, LOW);
+  digitalWrite(greenLED, LOW);
+  digitalWrite(redLED, LOW);
   WiFi.begin(ssid.c_str(), password.c_str());
   Serial.print("Connecting to WiFi ..");
+  bool blink = false;
   while (WiFi.status() != WL_CONNECTED)
   {
     Serial.print('.');
+    if (blink)
+    {
+      digitalWrite(blueLED, LOW);
+      blink = !blink;
+    }
+    else
+    {
+      digitalWrite(blueLED, HIGH);
+      blink = !blink;
+    }
+
     delay(1000);
   }
   Serial.println(WiFi.localIP());
+  digitalWrite(blueLED, HIGH);
 }
